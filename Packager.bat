@@ -1,0 +1,1 @@
+7z a "Archery Range.7z" BookArt Docs Icons Meshes MWSE Textures "Archery Range-metadata.toml" "Archery Range.esp"

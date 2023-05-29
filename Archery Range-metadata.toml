@@ -1,0 +1,17 @@
+[package]
+name = "Archery Range"
+description = "Archery Range is a Morrowind mod that adds an archery range and archery contest."
+repository = "https://github.com/amaliegay/archery-contest"
+authors = ["JosephMcKean"]
+version = "0.1.0"
+
+[dependencies]
+assets = [
+    "Archery Range.esp",
+    "Meshes\\jsmk\\ar",
+    "MWSE\\mods\\JosephMcKean\\archeryRange",
+]
+
+[dependencies.mods."OAAB_Data"]
+version = "^2.1.9"
+url = "https://www.nexusmods.com/morrowind/mods/49042"
