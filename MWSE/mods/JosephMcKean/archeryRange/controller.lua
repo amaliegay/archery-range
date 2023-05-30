@@ -5,8 +5,8 @@ local config = require("JosephMcKean.archeryRange.config")
 
 local log = logging.new({ name = "Archery Range", logLevel = config.logLevel })
 
-local target = { ["jsmk_ar_target"] = { [16] = 3, [32] = 2, [64] = 1 } }
-local isBow = { [tes3.weaponType.marksmanBow] = true, [tes3.weaponType.marksmanCrossbow] = true }
+local target = { ["jsmk_ar_target"] = { [1] = { radius = 3.49, point = 3 }, [2] = { radius = 14.76, point = 2 }, [3] = { radius = 25.98, point = 1 } } }
+local isBow = { [tes3.weaponType.marksmanBow] = true }
 local arrowPrac = "jsmk_ar_arrow_prac"
 local isPracArrow = { [arrowPrac] = true }
 local barrelArrows = "jsmk_ar_barrel_arrows"
@@ -28,9 +28,12 @@ local function testInSight(e)
 	return angle <= 110
 end
 
+---@class archeryRange.updataSwitchIndex.returns
+---@field block boolean?
+
 ---@param reference tes3reference
 ---@param index integer
----@return table?
+---@return archeryRange.updataSwitchIndex.returns?
 local function updataSwitchIndex(reference, index)
 	local switchNode = reference.sceneNode:getObjectByName("ArrowSwitch")
 	if not switchNode then return { block = true } end
@@ -44,10 +47,10 @@ local function equipBow()
 	-- if player has a bow equipped, returns
 	if readiedWeapon and isBow[readiedWeapon.object.type] then return end
 	-- the player doesn't have a bow equipped, find any bow in the inventory
-	local bow
+	local bow ---@type string
 	for _, itemStack in pairs(tes3.mobilePlayer.inventory) do
 		if isBow[itemStack.object.type] then
-			bow = itemStack.object
+			bow = itemStack.object.id
 			break
 		end
 	end
@@ -56,7 +59,7 @@ end
 
 ---@param e mwseTimerCallbackData
 local function arrowSpawnTimerCallback(e)
-	local barrelRef = e.timer.data.barrelRef
+	local barrelRef = e.timer.data.barrelRef ---@type tes3reference
 	-- if the player can see the barrel
 	if testInSight({ reference1 = tes3.player, reference2 = barrelRef }) then
 		-- start another timer
@@ -91,11 +94,15 @@ end
 
 ---@param e projectileHitObjectEventData
 function controller.projectileHitObject(e)
+	---@param point1 tes3vector3
+	---@param point2 tes3vector3
+	---@return number
+	local function getDistance(point1, point2) return math.sqrt(math.pow(point1.y - point2.y, 2) + math.pow(point1.z - point2.z, 2)) end
 	---@param id string
 	---@param hitDistance number
 	local function getPoint(id, hitDistance)
 		local targetData = target[id]
-		for radius, point in pairs(targetData) do if hitDistance <= radius then return point end end
+		for _, data in ipairs(targetData) do if hitDistance <= data.radius then return data.point end end
 		return 0
 	end
 
@@ -108,11 +115,56 @@ function controller.projectileHitObject(e)
 	-- We only care about practice arrows
 	if not isPracArrow[e.mobile.reference.baseObject.id] then return end
 
-	-- Calculate where did the arrow hit
-	local hitPoint = e.collisionPoint
-	local centerPoint = e.target.position
-	local hitDistance = centerPoint:distance(hitPoint)
+	-- Calculate where did the arrow hit on the target
+
+	-- Target
+	-- The point of the target `P_t`
+	local targetPos = e.target.position
+	log:trace("targetPos = %s", targetPos)
+	local targetOrientation = e.target.orientation
+	local unitVector = tes3vector3.new(0, 1, 0)
+	local rotationMatrix = tes3matrix33.new()
+	rotationMatrix:fromEulerXYZ(targetOrientation.x, targetOrientation.y, targetOrientation.z)
+	-- The orthogonal of the target plane `\vec{n}`
+	local targetOrthogonal = rotationMatrix * unitVector
+	log:trace("targetOrthogonal = %s", targetOrthogonal)
+
+	-- Arrow
+	-- The point of the arrow `P_a`
+	local arrowPos = e.collisionPoint
+	log:trace("arrowPos = %s", arrowPos)
+	log:trace("targetPos - arrowPos = %s", targetPos - arrowPos)
+	log:trace("targetOrthogonal:dot(targetPos - arrowPos) = %s", targetOrthogonal:dot(targetPos - arrowPos))
+	local arrowVelocity = e.mobile.velocity
+	log:trace("arrowVelocity = %s", arrowVelocity)
+	log:trace("targetOrthogonal:dot(arrowVelocity) = %s", targetOrthogonal:dot(arrowVelocity))
+
+	-- We want to find the point of intersection of the plane of the target and the line of the arrow
+	--
+	-- The equation of the plane is `\vec{n} \cdot (P - P_t) = 0`, where `P` is a point on the plane
+	--
+	-- The equation of the line is `P = P_a + v * t`, where `P` is a point on the line and `t` is a real number
+	--
+	-- Solution:
+	-- 
+	-- If `P_0` denotes the point of the intersection, then we must have 
+	-- 
+	-- `\vec{n} \cdot (P_0 - P_t) = 0`
+	-- 
+	-- `P_0 = P_a + v * t`
+	-- 
+	-- Substituting the latter equation into the equation of the plan gives
+	-- 
+	-- `(\vec{n} \cdot v) t_0 = \vec{n} \cdot (P_t - P_a)`, for some number `t_0`
+	local t0 = targetOrthogonal:dot(targetPos - arrowPos) / targetOrthogonal:dot(arrowVelocity)
+	log:trace("t0 = %s", t0)
+	-- From the equation for the line, we then obtain `P`
+	local intersectionPos = arrowPos + arrowVelocity * t0
+	log:trace("intersectionPos = %s", intersectionPos)
+
+	local hitDistance = getDistance(intersectionPos, targetPos)
 	local point = getPoint(e.target.baseObject.id, hitDistance)
+	log:debug("hitDistance = %s, point = %s", hitDistance, point)
 
 	tes3.messageBox("You scored %s point!", point)
 end

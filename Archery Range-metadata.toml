@@ -3,7 +3,7 @@ name = "Archery Range"
 description = "Archery Range is a Morrowind mod that adds an archery range and archery contest."
 repository = "https://github.com/amaliegay/archery-contest"
 authors = ["JosephMcKean"]
-version = "0.1.0"
+version = "0.2.0"
 
 [dependencies]
 assets = [
