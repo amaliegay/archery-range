@@ -82,7 +82,7 @@ function controller.activate(e)
 	local barrelRef = e.target
 
 	-- Set switch node to activated (1)
-	local swithResult = updataSwitchIndex(e.target, 1)
+	local swithResult = updataSwitchIndex(barrelRef, 1)
 	if swithResult and swithResult.block then return end
 	tes3.addItem({ reference = tes3.player, item = arrowPrac, count = 14, playSound = true, showMessage = true })
 	equipBow()
@@ -90,6 +90,12 @@ function controller.activate(e)
 
 	-- start arrow respawn timer
 	timer.start({ duration = 1, callback = arrowSpawnTimerCallback, persist = false, data = { barrelRef = barrelRef } })
+
+	-- Check for ownership.
+	local hasOwnershipAccess = tes3.hasOwnershipAccess({ target = barrelRef })
+
+	-- Check for crime
+	if not hasOwnershipAccess then tes3.triggerCrime({ type = tes3.crimeType.theft, victim = barrelRef.itemData.owner, value = 14 }) end
 end
 
 ---@param e projectileHitObjectEventData
