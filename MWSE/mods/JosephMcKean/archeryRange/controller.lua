@@ -34,7 +34,7 @@ end
 ---@param reference tes3reference
 ---@param index integer
 ---@return archeryRange.updataSwitchIndex.returns?
-local function updataSwitchIndex(reference, index)
+local function updateSwitchIndex(reference, index)
 	local switchNode = reference.sceneNode:getObjectByName("ArrowSwitch")
 	if not switchNode then return { block = true } end
 	if switchNode.switchIndex == index then return { block = true } end
@@ -66,7 +66,7 @@ local function arrowSpawnTimerCallback(e)
 		timer.start({ duration = 1, callback = arrowSpawnTimerCallback, persist = false, data = { barrelRef = barrelRef } })
 	else
 		-- Set switch node to default (0)
-		updataSwitchIndex(barrelRef, 0)
+		updateSwitchIndex(barrelRef, 0)
 	end
 end
 
@@ -82,7 +82,7 @@ function controller.activate(e)
 	local barrelRef = e.target
 
 	-- Set switch node to activated (1)
-	local swithResult = updataSwitchIndex(barrelRef, 1)
+	local swithResult = updateSwitchIndex(barrelRef, 1)
 	if swithResult and swithResult.block then return end
 	tes3.addItem({ reference = tes3.player, item = arrowPrac, count = 14, playSound = true, showMessage = true })
 	equipBow()
@@ -91,6 +91,9 @@ function controller.activate(e)
 	-- start arrow respawn timer
 	timer.start({ duration = 1, callback = arrowSpawnTimerCallback, persist = false, data = { barrelRef = barrelRef } })
 
+	-- Check if player has paid for the arrows
+	if tes3.player.data.archeryRange.training then return end
+
 	-- Check for ownership.
 	local hasOwnershipAccess = tes3.hasOwnershipAccess({ target = barrelRef })
 
@@ -98,31 +101,12 @@ function controller.activate(e)
 	if not hasOwnershipAccess then tes3.triggerCrime({ type = tes3.crimeType.theft, victim = barrelRef.itemData.owner, value = 14 }) end
 end
 
+function controller.loaded(e) tes3.player.data.archeryRange = tes3.player.data.archeryRange or {} end
+
+-- Calculate where did the arrow hit on the target
 ---@param e projectileHitObjectEventData
-function controller.projectileHitObject(e)
-	---@param point1 tes3vector3
-	---@param point2 tes3vector3
-	---@return number
-	local function getDistance(point1, point2) return math.sqrt(math.pow(point1.y - point2.y, 2) + math.pow(point1.z - point2.z, 2)) end
-	---@param id string
-	---@param hitDistance number
-	local function getPoint(id, hitDistance)
-		local targetData = target[id]
-		for _, data in ipairs(targetData) do if hitDistance <= data.radius then return data.point end end
-		return 0
-	end
-
-	-- We only care about the player
-	if e.firingReference ~= tes3.player then return end
-	-- We only care about bows and crossbows 
-	if not isBow[e.firingWeapon.type] then return end
-	-- We only care about archery targets
-	if not target[e.target.baseObject.id] then return end
-	-- We only care about practice arrows
-	if not isPracArrow[e.mobile.reference.baseObject.id] then return end
-
-	-- Calculate where did the arrow hit on the target
-
+---@return tes3vector3
+local function calcCollisionPoint(e)
 	-- Target
 	-- The point of the target `P_t`
 	local targetPos = e.target.position
@@ -157,7 +141,7 @@ function controller.projectileHitObject(e)
 	-- 
 	-- `\vec{n} \cdot (P_0 - P_t) = 0`
 	-- 
-	-- `P_0 = P_a + v * t`
+	-- `P_0 = P_a + v * t_0`
 	-- 
 	-- Substituting the latter equation into the equation of the plan gives
 	-- 
@@ -167,12 +151,59 @@ function controller.projectileHitObject(e)
 	-- From the equation for the line, we then obtain `P`
 	local intersectionPos = arrowPos + arrowVelocity * t0
 	log:trace("intersectionPos = %s", intersectionPos)
+	return intersectionPos
+end
 
-	local hitDistance = getDistance(intersectionPos, targetPos)
-	local point = getPoint(e.target.baseObject.id, hitDistance)
-	log:debug("hitDistance = %s, point = %s", hitDistance, point)
+---@param point1 tes3vector3
+---@param point2 tes3vector3
+---@return number
+local function getDistance(point1, point2) return math.sqrt(math.pow(point1.y - point2.y, 2) + math.pow(point1.z - point2.z, 2)) end
 
-	tes3.messageBox("You scored %s point!", point)
+---@param id string
+---@param targetPos tes3vector3
+---@param intersectionPos tes3vector3
+local function getScore(id, targetPos, intersectionPos)
+	local score = 0
+	local hitDistance = getDistance(targetPos, intersectionPos)
+	local targetData = target[id]
+	for _, data in ipairs(targetData) do
+		if hitDistance <= data.radius then
+			score = data.point
+			break
+		end
+	end
+	log:debug("hitDistance = %s, point = %s", hitDistance, score)
+	tes3.messageBox("You scored %s point!", score)
+	return score
+end
+
+---@param targetPos tes3vector3
+---@param score number
+local function progressSkill(targetPos, score)
+	if not tes3.player.data.archeryRange.training then return end
+	local distance = tes3.player.position:distance(targetPos)
+	log:trace("distance = %s", distance)
+	local standardDistance = 512
+	local distanceMulti = math.clamp(distance / standardDistance, 0.5, 2)
+	log:trace("distanceMulti = %s", distanceMulti)
+	local progress = math.floor(distanceMulti * score) / 3
+	tes3.mobilePlayer:exerciseSkill(tes3.skill.marksman, progress)
+end
+
+---@param e projectileHitObjectEventData
+function controller.projectileHitObject(e)
+	-- We only care about the player
+	if e.firingReference ~= tes3.player then return end
+	-- We only care about bows and crossbows 
+	if not isBow[e.firingWeapon.type] then return end
+	-- We only care about archery targets
+	if not target[e.target.baseObject.id] then return end
+	-- We only care about practice arrows
+	if not isPracArrow[e.mobile.reference.baseObject.id] then return end
+
+	local intersectionPos = calcCollisionPoint(e)
+	local score = getScore(e.target.baseObject.id, e.target.position, intersectionPos)
+	progressSkill(e.target.position, score)
 end
 
 ---@param e referenceSceneNodeCreatedEventData
@@ -180,7 +211,7 @@ function controller.referenceSceneNodeCreated(e)
 	-- We only care about the barrel of arrows
 	if e.reference.baseObject.id ~= barrelArrows then return end
 	-- Set switch node to default (0)
-	updataSwitchIndex(e.reference, 0)
+	updateSwitchIndex(e.reference, 0)
 end
 
 return controller
